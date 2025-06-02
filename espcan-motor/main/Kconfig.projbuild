@@ -1,0 +1,47 @@
+menu "电机控制配置"
+
+    config PWM_GPIO
+        int "PWM输出GPIO"
+        default 18
+        help
+            设置PWM输出的GPIO引脚号，用于控制电机速度。
+
+    config SSR_GPIO
+        int "SSR控制GPIO"
+        default 23
+        help
+            设置SSR控制的GPIO引脚号，用于控制电机启停。
+
+    config PWM_FREQUENCY
+        int "PWM频率(Hz)"
+        default 1000
+        range 100 40000
+        help
+            设置PWM输出频率，单位为Hz。推荐值为1kHz。
+
+    config CAN_TX_GPIO
+        int "CAN TX GPIO"
+        default 5
+        help
+            设置CAN总线TX引脚。
+
+    config CAN_RX_GPIO
+        int "CAN RX GPIO"
+        default 4
+        help
+            设置CAN总线RX引脚。
+
+    config CAN_BITRATE
+        int "CAN总线比特率(kbps)"
+        default 500
+        range 100 1000
+        help
+            设置CAN总线比特率，单位为kbps。常用值为500kbps。
+
+    config CAN_CONTROL_ID
+        hex "CAN控制ID"
+        default 0x301
+        help
+            设置接收控制命令的CAN帧ID。
+
+endmenu 

@@ -1,0 +1,2 @@
+pyserial>=3.5
+tkinter # 通常包含在Python标准库中 

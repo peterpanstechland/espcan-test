@@ -1,0 +1,91 @@
+# ESP32 + PWM 调速 + CAN 控制 + DC SSR 启停验证 (PlatformIO 版本)
+
+本项目用于实现基于 ESP32 的电机控制系统，通过 CAN 总线接收控制命令，使用 PWM 调节电机速度，并使用 SSR（固态继电器）控制电机的启停。
+
+## 功能特点
+
+- 使用 ESP32 的 LEDC 模块输出 PWM 信号控制电机速度（1kHz频率，8位分辨率）
+- 通过 CAN 总线接收控制命令（占空比和启停状态）
+- 使用 GPIO 控制 SSR 实现电机的启停控制
+- 系统默认上电状态为停止，安全可靠
+- 向 CAN 总线发送状态确认消息
+
+## 硬件连接
+
+### 1. ESP32 接线
+
+| 功能 | ESP32 引脚 | 外部连接 |
+|-----|-----------|---------|
+| PWM 输出 | GPIO18 | 电机驱动 PWM 输入 |
+| SSR 控制 | GPIO23 | SSR 输入端（建议串接 220Ω 限流电阻） |
+| CAN TX | GPIO5 | CAN 收发器 TX 引脚 |
+| CAN RX | GPIO4 | CAN 收发器 RX 引脚 |
+
+### 2. 电机连接
+
+- 电机电源：独立 3~24V DC 电源
+- 电机驱动：通过 SSR 或 MOSFET 进行控制
+- 注意：电机供电应与 ESP32 供电分离，防止干扰
+
+## CAN 通信协议
+
+- **消息 ID**：0x301
+- **数据格式**：
+  - `Data[0]`：PWM 占空比值（0~255）
+  - `Data[1]`：启停控制（0=停止，1=启动）
+  - `Data[2]`：确认标志（仅在响应中使用，固定为0x01）
+
+### 示例：
+
+1. 设置占空比为 128，开启电机：
+   ```
+   ID: 0x301, Data: [128, 1]
+   ```
+
+2. 停止电机：
+   ```
+   ID: 0x301, Data: [0, 0]
+   ```
+
+## 编译与烧录
+
+本项目基于 PlatformIO 开发，请确保已安装 PlatformIO 环境。
+
+```bash
+# 编译项目
+pio run
+
+# 烧录到 ESP32
+pio run --target upload
+
+# 查看日志输出
+pio device monitor
+```
+
+## 配置选项
+
+项目默认配置在 `platformio.ini` 文件中，可根据需要修改：
+
+```ini
+build_flags = 
+    -D CONFIG_PWM_GPIO=18
+    -D CONFIG_SSR_GPIO=23
+    -D CONFIG_PWM_FREQUENCY=1000
+    -D CONFIG_CAN_TX_GPIO=5
+    -D CONFIG_CAN_RX_GPIO=4
+    -D CONFIG_CAN_BITRATE=500
+    -D CONFIG_CAN_CONTROL_ID=0x301
+```
+
+## 扩展功能
+
+- [ ] CAN 状态上报功能
+- [ ] 电流/温度保护功能
+- [ ] EEPROM 保存最后速度设定
+
+## 注意事项
+
+1. SSR 验证：请确认 SSR 是否支持 PWM 控制，若不支持，建议使用 MOSFET 作为调速器，SSR 仅用于电机启停
+2. 电源隔离：电机供电应独立于 ESP32 控制电路，防止干扰
+3. 电机接线：根据电机类型正确连接，注意极性
+4. 散热：对于大功率电机，应为 SSR 或 MOSFET 提供足够的散热 
