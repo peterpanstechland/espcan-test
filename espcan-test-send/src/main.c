@@ -234,15 +234,15 @@ void send_wooden_fish_hit_event(void) {
         
         // 通过UART也发送给TouchDesigner
         // 使用明确的格式并发送多次以确保接收
-        const char *hit_msg1 = "WOODEN_FISH_HIT\n";
+        // const char *hit_msg1 = "WOODEN_FISH_HIT\n";
         const char *hit_msg2 = "木鱼被敲击\n";
-        const char *hit_msg3 = "EVENT:WOODFISH_HIT\n";
+        // const char *hit_msg3 = "EVENT:WOODFISH_HIT\n";
         
-        uart_write_bytes(UART_NUM, hit_msg1, strlen(hit_msg1));
-        vTaskDelay(pdMS_TO_TICKS(10)); // 短暂延时确保消息分开
+        // uart_write_bytes(UART_NUM, hit_msg1, strlen(hit_msg1));
+        // vTaskDelay(pdMS_TO_TICKS(10)); // 短暂延时确保消息分开
         uart_write_bytes(UART_NUM, hit_msg2, strlen(hit_msg2));
-        vTaskDelay(pdMS_TO_TICKS(10));
-        uart_write_bytes(UART_NUM, hit_msg3, strlen(hit_msg3));
+        // vTaskDelay(pdMS_TO_TICKS(10));
+        // uart_write_bytes(UART_NUM, hit_msg3, strlen(hit_msg3));
     } else {
         ESP_LOGE(TAG, "发送木鱼敲击事件失败: %s", esp_err_to_name(result));
     }
@@ -337,6 +337,25 @@ void process_touchdesigner_command(const char* cmd) {
         } else {
             ESP_LOGE(TAG, "情绪值无效: %d", emotion_val);
         }
+    } else if (strncmp(cmd, "EXPRESSION:", 11) == 0) {
+        // 表情控制命令格式: "EXPRESSION:HAPPY" (HAPPY=开心, SAD=伤心, SURPRISE=惊讶)
+        const char* expr_type = cmd + 11;
+        
+        if (strcmp(expr_type, "HAPPY") == 0) {
+            ESP_LOGI(TAG, "设置表情: 开心");
+            send_emotion_command(EMOTION_HAPPY);
+        } else if (strcmp(expr_type, "SAD") == 0) {
+            ESP_LOGI(TAG, "设置表情: 伤心");
+            send_emotion_command(EMOTION_SAD);
+        } else if (strcmp(expr_type, "SURPRISE") == 0) {
+            ESP_LOGI(TAG, "设置表情: 惊讶");
+            send_emotion_command(EMOTION_SURPRISE);
+        } else if (strcmp(expr_type, "UNKNOWN") == 0) {
+            ESP_LOGI(TAG, "设置表情: 随机");
+            send_emotion_command(EMOTION_RANDOM);
+        } else {
+            ESP_LOGW(TAG, "未知表情类型: %s", expr_type);
+        }
     } else if (strncmp(cmd, "LED:", 4) == 0) {
         // LED控制命令格式: "LED:1" (1=开, 0=关)
         int led_val = atoi(cmd + 4);
@@ -391,12 +410,16 @@ void uart_rx_task(void *pvParameters) {
         if (len > 0) {
             data[len] = 0; // 确保字符串结束
             
+            // 打印原始接收到的数据（调试用）
+            ESP_LOGI(TAG, "收到原始数据: %s", data);
+            
             // 处理接收到的数据
             for (int i = 0; i < len; i++) {
                 if (data[i] == '\n' || data[i] == '\r') {
                     // 命令结束
                     if (cmd_index > 0) {
                         command[cmd_index] = 0; // 字符串结束符
+                        ESP_LOGI(TAG, "处理命令: %s", command);
                         process_touchdesigner_command(command);
                         cmd_index = 0; // 重置命令缓冲区
                     }
@@ -448,6 +471,10 @@ void app_main(void)
                           "EMOTION:2 - 设置伤心情绪\n"
                           "EMOTION:3 - 设置惊讶情绪\n"
                           "EMOTION:4 - 设置随机情绪\n"
+                          "EXPRESSION:HAPPY - 设置开心表情\n"
+                          "EXPRESSION:SAD - 设置伤心表情\n"
+                          "EXPRESSION:SURPRISE - 设置惊讶表情\n"
+                          "EXPRESSION:UNKNOWN - 设置随机表情\n"
                           "RANDOM:1:speed:brightness - 启动随机效果\n"
                           "RANDOM:0 - 停止随机效果\n"
                           "LED:1 - 打开LED\n"
