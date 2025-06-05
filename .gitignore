@@ -1,0 +1,15 @@
+# Ignore VS Code configuration files
+.vscode/
+
+# Platformio build files
+.pio/
+
+# Build directories and files
+build/
+*.o
+*.d
+*.elf
+*.bin
+
+# Environment specific files
+.env 
