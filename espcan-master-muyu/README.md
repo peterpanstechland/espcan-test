@@ -1,6 +1,6 @@
-# ESP32 CAN发送端 (ESP-IDF版本)
+# ESP32 木鱼主控模块 (ESP-IDF版本)
 
-这个项目实现了ESP32作为CAN总线通信的发送端，使用ESP-IDF框架开发。在ESP-IDF中，CAN控制器被称为TWAI (Two-Wire Automotive Interface)。该项目可接收来自TouchDesigner的串口命令，并将其转换为CAN总线消息发送给接收设备，同时还支持木鱼敲击事件的监测与通知。
+这个项目实现了ESP32作为木鱼互动装置的主控模块，使用ESP-IDF框架开发。该模块通过CAN总线与其他设备通信，可接收来自TouchDesigner的串口命令，监测木鱼敲击事件，并将情绪状态命令发送给灯光、声音、雾化器和电机等从设备。在ESP-IDF中，CAN控制器被称为TWAI (Two-Wire Automotive Interface)。
 
 ## 目录
 
@@ -25,8 +25,8 @@
 - **GND** -> CAN模块的GND
 
 ### 木鱼传感器连接
-- **GPIO 18** -> 震动传感器输出
-- **GPIO 19** -> 敲击声音传感器输出
+- **GPIO 19** -> 震动传感器输出
+- **GPIO 26** -> 敲击声音传感器输出
 - **3.3V/5V** -> 传感器VCC (根据传感器要求)
 - **GND** -> 传感器GND
 
@@ -37,29 +37,29 @@
 
 本项目提供以下主要功能：
 
-1. **CAN总线通信**
-   - 使用ESP-IDF的TWAI接口初始化CAN总线，波特率500kbps
-   - 可发送多种类型的CAN消息，包括LED控制、情绪状态、随机效果等
-   - 接收来自其他设备的CAN响应
-
-2. **串口命令处理**
-   - 接收来自TouchDesigner的串口命令
-   - 支持多种命令格式，包括EMOTION、EXPRESSION、LED等
-   - 实时显示接收到的原始数据和命令处理状态
-
-3. **木鱼敲击事件监测**
+1. **木鱼敲击监测**
    - 通过GPIO监测木鱼的震动和声音传感器
    - 当检测到敲击事件时，通过CAN总线发送通知
    - 同时通过串口发送事件通知给TouchDesigner
 
-4. **LED和特效控制**
-   - 控制接收端的LED灯效果
-   - 支持多种情绪表达效果，如开心、伤心、惊讶等
-   - 支持随机效果和参数调整
+2. **CAN总线通信**
+   - 使用ESP-IDF的TWAI接口初始化CAN总线，波特率500kbps
+   - 可发送多种类型的CAN消息，包括LED控制、情绪状态、随机效果等
+   - 接收来自其他设备的CAN响应
 
-5. **电机和雾化器控制**
-   - 可控制外部设备如电机和雾化器的开关状态
-   - 支持PWM调速功能
+3. **串口命令处理**
+   - 接收来自TouchDesigner的串口命令
+   - 支持多种命令格式，包括EMOTION、EXPRESSION、LED等
+   - 实时显示接收到的原始数据和命令处理状态
+
+4. **情绪状态控制**
+   - 发送情绪状态命令控制从设备的行为
+   - 支持开心、伤心、惊讶等情绪表达
+   - 可通过TouchDesigner界面实时切换情绪状态
+
+5. **设备协调控制**
+   - 作为主控模块协调控制灯光、声音、雾化器和电机等从设备
+   - 提供统一的命令接口和交互体验
 
 ## 代码结构
 
@@ -70,6 +70,10 @@
 // 定义CAN引脚
 #define CAN_TX_PIN GPIO_NUM_5
 #define CAN_RX_PIN GPIO_NUM_4
+
+// 定义木鱼传感器引脚
+#define VIBRATION_SENSOR_PIN GPIO_NUM_19
+#define BUZZER_SENSOR_PIN GPIO_NUM_26
 
 // 消息ID
 #define LED_CMD_ID 0x456          // LED控制命令ID
@@ -251,8 +255,8 @@ void app_main(void) {
 - 波特率: 通过 `TWAI_TIMING_CONFIG_500KBITS()` 设置为500kbps
 
 ### 木鱼传感器配置
-- `VIBRATION_SENSOR_PIN`: 震动传感器引脚（默认GPIO 18）
-- `BUZZER_SENSOR_PIN`: 声音传感器引脚（默认GPIO 19）
+- `VIBRATION_SENSOR_PIN`: 震动传感器引脚（默认GPIO 19）
+- `BUZZER_SENSOR_PIN`: 声音传感器引脚（默认GPIO 26）
 - `WOODEN_FISH_DEBOUNCE_MS`: 消抖时间（默认50ms）
 
 ### UART配置

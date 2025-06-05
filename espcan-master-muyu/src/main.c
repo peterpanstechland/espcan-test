@@ -15,8 +15,8 @@
 #define CAN_RX_PIN GPIO_NUM_4
 
 // 定义木鱼传感器引脚
-#define VIBRATION_SENSOR_PIN GPIO_NUM_19
-#define BUZZER_SENSOR_PIN GPIO_NUM_26
+#define VIBRATION_SENSOR_PIN GPIO_NUM_22
+#define BUZZER_SENSOR_PIN GPIO_NUM_23
 #define WOODEN_FISH_DEBOUNCE_MS 50   // 消抖时间（毫秒）
 
 // UART配置 - 用于接收TouchDesigner的控制命令
@@ -52,7 +52,7 @@
 #define FOGGER_CMD_ON 1    // 开启雾化器
 
 // 日志标签
-static const char *TAG = "CAN_SENDER";
+static const char *TAG = "MASTER_MUYU";
 
 // TWAI配置
 static const twai_general_config_t g_config = {
@@ -166,7 +166,7 @@ void send_random_command(uint8_t random_state, uint8_t param1, uint8_t param2) {
 }
 
 // 发送电机控制命令
-void send_motor_command(uint8_t pwm_duty, uint8_t on_off) {
+void send_motor_command(uint8_t pwm_duty, uint8_t on_off, uint8_t fade_mode) {
     twai_message_t tx_message;
     
     // 配置电机控制消息
@@ -175,16 +175,17 @@ void send_motor_command(uint8_t pwm_duty, uint8_t on_off) {
     tx_message.rtr = 0;       // 非远程帧
     tx_message.ss = 1;        // 单次发送
     tx_message.self = 0;      // 不是自发自收
-    tx_message.data_length_code = 2;
+    tx_message.data_length_code = 3;  // 更新为3字节
     tx_message.data[0] = pwm_duty;  // PWM占空比(0-255)
     tx_message.data[1] = on_off;    // 启停状态(0=停止,1=启动)
+    tx_message.data[2] = fade_mode; // 渐变模式(0=固定速度,1=渐变速度)
     
     // 发送消息
     esp_err_t result = twai_transmit(&tx_message, pdMS_TO_TICKS(1000));
     
     if (result == ESP_OK) {
-        ESP_LOGI(TAG, "发送电机控制命令成功: 占空比=%d, 状态=%s", 
-                 pwm_duty, on_off ? "启动" : "停止");
+        ESP_LOGI(TAG, "发送电机控制命令成功: 占空比=%d, 状态=%s, 模式=%s", 
+                 pwm_duty, on_off ? "启动" : "停止", fade_mode ? "渐变" : "固定");
     } else {
         ESP_LOGE(TAG, "发送电机控制命令失败: %s", esp_err_to_name(result));
     }
@@ -372,17 +373,19 @@ void process_touchdesigner_command(const char* cmd) {
         
         send_random_command(state, param1, param2);
     } else if (strncmp(cmd, "MOTOR:", 6) == 0) {
-        // 电机控制命令格式: "MOTOR:pwm:state" (pwm=0-255, state=0/1)
+        // 电机控制命令格式: "MOTOR:pwm:state:fade" (pwm=0-255, state=0/1, fade=0/1)
         char *pwm_str = strtok((char*)(cmd + 6), ":");
         char *state_str = strtok(NULL, ":");
+        char *fade_str = strtok(NULL, ":");
         
         if (pwm_str != NULL && state_str != NULL) {
             uint8_t pwm = atoi(pwm_str);
             uint8_t state = atoi(state_str) ? 1 : 0;
+            uint8_t fade = (fade_str != NULL) ? atoi(fade_str) : 0;  // 默认不渐变
             
-            send_motor_command(pwm, state);
+            send_motor_command(pwm, state, fade);
         } else {
-            ESP_LOGE(TAG, "电机控制命令格式错误，应为MOTOR:pwm:state");
+            ESP_LOGE(TAG, "电机控制命令格式错误，应为MOTOR:pwm:state[:fade]");
         }
     } else if (strncmp(cmd, "FOGGER:", 7) == 0) {
         // 雾化器控制命令格式: "FOGGER:1" (1=开, 0=关)
@@ -479,7 +482,7 @@ void app_main(void)
                           "RANDOM:0 - 停止随机效果\n"
                           "LED:1 - 打开LED\n"
                           "LED:0 - 关闭LED\n"
-                          "MOTOR:pwm:state - 控制电机(pwm=0-255, state=0/1)\n"
+                          "MOTOR:pwm:state:fade - 控制电机(pwm=0-255, state=0/1, fade=0/1)\n"
                           "FOGGER:1 - 开启雾化器\n"
                           "FOGGER:0 - 关闭雾化器\n"
                           "WOODFISH_TEST - 模拟木鱼敲击事件\n"

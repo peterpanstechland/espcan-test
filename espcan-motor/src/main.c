@@ -5,7 +5,6 @@
  * 1. 使用 ESP32 的 LEDC 模块输出 PWM 信号控制电机速度
  * 2. 使用 CAN 接收控制命令(占空比和启停)
  * 3. 使用 GPIO 控制 SSR 实现电机启停
- * 4. 提供串口命令行界面用于测试
  */
 
 #include <stdio.h>
@@ -19,10 +18,6 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/twai.h"
-#include "sdkconfig.h"
-
-// 测试命令模块
-#include "test_commands.h"
 
 // 日志标签
 static const char *TAG = "espcan-motor";
@@ -50,14 +45,29 @@ static const char *TAG = "espcan-motor";
 #define CMD_PWM_INDEX           0                     // 占空比值在Data[0]
 #define CMD_ONOFF_INDEX         1                     // 启停命令在Data[1]
 
+// 电机渐变模式
+#define MOTOR_MODE_FIXED        0                     // 固定速度模式
+#define MOTOR_MODE_GRADUAL      1                     // 渐变速度模式
+
 // 电机状态
 static struct {
     uint8_t duty;                              // 当前占空比(0-255)
     uint8_t is_running;                        // 当前运行状态
+    uint8_t mode;                              // 运行模式(0=固定,1=渐变)
+    uint8_t target_duty;                       // 目标占空比
+    int direction;                             // 渐变方向(1=增加,-1=减少)
+    uint32_t gradual_timer;                    // 渐变计时器
 } motor_state = {
     .duty = 0,
-    .is_running = 0
+    .is_running = 0,
+    .mode = MOTOR_MODE_FIXED,
+    .target_duty = 0,
+    .direction = 1,
+    .gradual_timer = 0
 };
+
+// 电机渐变任务句柄
+TaskHandle_t gradual_task_handle = NULL;
 
 // 初始化 LEDC 模块用于 PWM 输出
 static void pwm_init(void)
@@ -130,21 +140,59 @@ static void set_ssr_state(uint8_t state)
 // 选择适当的CAN总线时序配置
 static twai_timing_config_t get_can_timing_config(int bitrate_kbps)
 {
+    twai_timing_config_t t_config;
+    
+    // 默认初始化
+    t_config.clk_src = TWAI_CLK_SRC_DEFAULT;
+    t_config.triple_sampling = false;
+    
     switch (bitrate_kbps) {
         case 100:
-            return TWAI_TIMING_CONFIG_100KBITS();
+            t_config.quanta_resolution_hz = 2000000;
+            t_config.brp = 0;
+            t_config.tseg_1 = 15;
+            t_config.tseg_2 = 4;
+            t_config.sjw = 3;
+            break;
         case 125:
-            return TWAI_TIMING_CONFIG_125KBITS();
+            t_config.quanta_resolution_hz = 2500000;
+            t_config.brp = 0;
+            t_config.tseg_1 = 15;
+            t_config.tseg_2 = 4;
+            t_config.sjw = 3;
+            break;
         case 250:
-            return TWAI_TIMING_CONFIG_250KBITS();
+            t_config.quanta_resolution_hz = 5000000;
+            t_config.brp = 0;
+            t_config.tseg_1 = 15;
+            t_config.tseg_2 = 4;
+            t_config.sjw = 3;
+            break;
         case 800:
-            return TWAI_TIMING_CONFIG_800KBITS();
+            t_config.quanta_resolution_hz = 20000000;
+            t_config.brp = 0;
+            t_config.tseg_1 = 16;
+            t_config.tseg_2 = 8;
+            t_config.sjw = 3;
+            break;
         case 1000:
-            return TWAI_TIMING_CONFIG_1MBITS();
+            t_config.quanta_resolution_hz = 20000000;
+            t_config.brp = 0;
+            t_config.tseg_1 = 15;
+            t_config.tseg_2 = 4;
+            t_config.sjw = 3;
+            break;
         case 500:
         default:
-            return TWAI_TIMING_CONFIG_500KBITS();
+            t_config.quanta_resolution_hz = 10000000;
+            t_config.brp = 0;
+            t_config.tseg_1 = 15;
+            t_config.tseg_2 = 4;
+            t_config.sjw = 3;
+            break;
     }
+    
+    return t_config;
 }
 
 // 初始化 CAN 控制器
@@ -173,6 +221,75 @@ static void can_init(void)
              CAN_TX_GPIO, CAN_RX_GPIO, CONFIG_CAN_BITRATE, (unsigned long)CAN_CONTROL_ID);
 }
 
+// 电机渐变速度任务
+void gradual_speed_task(void *pvParameters)
+{
+    uint8_t current_duty = 0;
+    int step = 0;
+    
+    while (1) {
+        // 检查是否处于渐变模式且电机运行中
+        if (motor_state.mode == MOTOR_MODE_GRADUAL && motor_state.is_running) {
+            // 获取当前占空比
+            current_duty = motor_state.duty;
+            
+            // 计算步进值 (根据当前占空比动态调整步进值)
+            if (current_duty < 50) {
+                // 低速区域 - 小步进
+                step = 1;
+            } else if (current_duty < 150) {
+                // 中速区域 - 中步进
+                step = 2;
+            } else {
+                // 高速区域 - 大步进
+                step = 3;
+            }
+            
+            // 根据方向调整占空比
+            if (motor_state.direction > 0) {
+                // 增加方向
+                if (current_duty < motor_state.target_duty) {
+                    current_duty += step;
+                    if (current_duty > motor_state.target_duty) {
+                        current_duty = motor_state.target_duty;
+                        motor_state.direction = -1;  // 改变方向
+                    }
+                    set_pwm_duty(current_duty);
+                } else {
+                    motor_state.direction = -1;  // 改变方向
+                }
+            } else {
+                // 减少方向
+                if (current_duty > 0) {
+                    if (current_duty > step) {
+                        current_duty -= step;
+                    } else {
+                        current_duty = 0;
+                        motor_state.direction = 1;  // 改变方向
+                    }
+                    set_pwm_duty(current_duty);
+                } else {
+                    motor_state.direction = 1;  // 改变方向
+                }
+            }
+            
+            motor_state.gradual_timer++;
+            
+            // 延时，根据速度区域调整延时时间
+            if (current_duty < 50) {
+                vTaskDelay(pdMS_TO_TICKS(80));  // 低速区域 - 慢变化
+            } else if (current_duty < 150) {
+                vTaskDelay(pdMS_TO_TICKS(50));  // 中速区域 - 中等变化
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(30));  // 高速区域 - 快变化
+            }
+        } else {
+            // 非渐变模式或电机停止 - 降低CPU使用
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+}
+
 // 处理收到的CAN控制命令
 static void process_can_command(twai_message_t *message)
 {
@@ -188,49 +305,50 @@ static void process_can_command(twai_message_t *message)
     // 获取启停命令
     uint8_t on_off = message->data[CMD_ONOFF_INDEX] ? 1 : 0;
     
-    ESP_LOGI(TAG, "收到CAN控制命令 - 占空比: %d, 状态: %s", 
-             pwm_duty, on_off ? "启动" : "停止");
+    // 获取额外参数 - 模式
+    uint8_t mode = MOTOR_MODE_FIXED;  // 默认固定模式
+    if (message->data_length_code >= 3) {
+        mode = message->data[2] ? MOTOR_MODE_GRADUAL : MOTOR_MODE_FIXED;
+    }
     
-    // 设置PWM占空比
-    set_pwm_duty(pwm_duty);
+    ESP_LOGI(TAG, "收到CAN控制命令 - 占空比: %d, 状态: %s, 模式: %s", 
+             pwm_duty, on_off ? "启动" : "停止", 
+             mode ? "渐变" : "固定");
+    
+    // 设置运行模式
+    motor_state.mode = mode;
+    
+    if (mode == MOTOR_MODE_GRADUAL) {
+        // 渐变模式 - 设置目标占空比
+        motor_state.target_duty = pwm_duty;
+        
+        // 如果当前占空比为0，从低速开始
+        if (motor_state.duty == 0) {
+            motor_state.direction = 1;  // 增加方向
+            set_pwm_duty(10);  // 从低速开始
+        }
+    } else {
+        // 固定模式 - 直接设置PWM占空比
+        set_pwm_duty(pwm_duty);
+    }
     
     // 控制SSR状态
     set_ssr_state(on_off);
-}
-
-// 命令处理任务
-static void cmd_task(void *pvParameters)
-{
-    // 命令处理循环
-    while (1) {
-        char *line = linenoise("motor> ");
-        if (line == NULL) {
-            // EOF或出错，继续
-            continue;
-        }
-        
-        // 添加到历史记录
-        if (strlen(line) > 0) {
-            linenoiseHistoryAdd(line);
-        }
-
-        // 尝试执行命令
-        int ret;
-        esp_err_t err = esp_console_run(line, &ret);
-        if (err == ESP_ERR_NOT_FOUND) {
-            printf("未知命令\n");
-        } else if (err == ESP_ERR_INVALID_ARG) {
-            // 命令解析出错，显示的错误已经由 arg_parse 处理
-        } else if (err == ESP_OK && ret != ESP_OK) {
-            printf("命令返回非0值: 0x%x (%s)\n", ret, esp_err_to_name(ret));
-        }
-
-        // 释放行缓冲区
-        linenoiseFree(line);
-        
-        // 短暂延时，避免CPU占用过高
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
+    
+    // 发送状态确认消息
+    twai_message_t tx_message;
+    tx_message.identifier = CAN_CONTROL_ID;
+    tx_message.extd = 0;      // 标准帧
+    tx_message.rtr = 0;       // 非远程帧
+    tx_message.ss = 1;        // 单次发送
+    tx_message.self = 0;      // 不是自发自收
+    tx_message.data_length_code = 4;
+    tx_message.data[0] = motor_state.duty;   // 当前占空比
+    tx_message.data[1] = on_off;             // 当前状态
+    tx_message.data[2] = mode;               // 当前模式
+    tx_message.data[3] = 0x01;               // 确认标志
+    
+    twai_transmit(&tx_message, pdMS_TO_TICKS(100));
 }
 
 void app_main(void)
@@ -242,14 +360,10 @@ void app_main(void)
     ssr_init();
     can_init();
     
-    // 初始化测试命令控制台
-    initialize_console();
-    register_test_commands(set_pwm_duty, set_ssr_state);
+    // 创建渐变速度任务
+    xTaskCreate(gradual_speed_task, "gradual_speed", 2048, NULL, 5, &gradual_task_handle);
     
-    // 创建命令处理任务
-    xTaskCreate(cmd_task, "cmd_task", 4096, NULL, 2, NULL);
-    
-    ESP_LOGI(TAG, "系统初始化完成，等待CAN控制命令或串口命令...");
+    ESP_LOGI(TAG, "系统初始化完成，等待CAN控制命令...");
     
     // CAN消息接收缓冲区
     twai_message_t rx_message;

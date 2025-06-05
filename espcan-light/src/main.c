@@ -21,7 +21,7 @@
 #define LED_PIN GPIO_NUM_2
 
 // 定义WS2812灯带控制引脚
-#define WS2812_PIN GPIO_NUM_27
+#define WS2812_PIN GPIO_NUM_18
 #define WS2812_LEDS_COUNT 200  // 原先是100，减少到20进行测试
 
 // CAN消息ID
@@ -35,8 +35,8 @@
 
 // 情绪状态命令
 #define EMOTION_HAPPY 1    // 开心 - 彩虹效果
-#define EMOTION_SAD 2      // 伤心 - 蓝色闪电
-#define EMOTION_SURPRISE 3 // 惊讶 - 紫色追逐
+#define EMOTION_SAD 2      // 伤心 - 紫色追逐
+#define EMOTION_SURPRISE 3 // 惊讶 - 蓝色闪电
 #define EMOTION_RANDOM 4   // 随机效果
 
 // 随机效果命令
@@ -52,7 +52,7 @@ typedef struct {
 } random_effect_params_t;
 
 // 日志标签
-static const char *TAG = "CAN_RECEIVER";
+static const char *TAG = "LIGHT_CTRL";
 
 // 当前情绪状态
 static uint8_t current_emotion = 0;
@@ -62,6 +62,14 @@ static random_effect_params_t random_effect = {0};
 
 // LED灯带句柄
 led_strip_handle_t led_strip;
+
+// 函数声明
+void rainbow_effect(int delay_ms);
+void blue_lightning_effect(int delay_ms);
+void purple_chase_effect(int delay_ms);
+void meteor_shower_effect(int delay_ms, uint8_t brightness);
+void random_explosion_effect(int delay_ms, uint8_t brightness);
+void breathing_light_effect(int delay_ms, uint8_t brightness);
 
 // TWAI配置
 static const twai_general_config_t g_config = {
@@ -148,15 +156,19 @@ void handle_emotion_command(twai_message_t *message) {
             break;
             
         case EMOTION_SAD:
-            ESP_LOGI(TAG, "情绪状态设置为: 伤心 (蓝色闪电)");
+            ESP_LOGI(TAG, "情绪状态设置为: 伤心 (紫色追逐)");
             break;
             
         case EMOTION_SURPRISE:
-            ESP_LOGI(TAG, "情绪状态设置为: 惊讶 (紫色追逐)");
+            ESP_LOGI(TAG, "情绪状态设置为: 惊讶 (蓝色闪电)");
             break;
             
         case EMOTION_RANDOM:
-            ESP_LOGI(TAG, "情绪状态设置为: 随机效果");
+            ESP_LOGI(TAG, "情绪状态设置为: 随机效果 (呼吸灯)");
+            // 启用呼吸灯效果
+            random_effect.enabled = 1;
+            random_effect.speed = 50;      // 中等速度
+            random_effect.brightness = 200; // 较高亮度
             break;
             
         default:
@@ -485,6 +497,49 @@ void random_explosion_effect(int delay_ms, uint8_t brightness) {
     vTaskDelay(pdMS_TO_TICKS(delay_ms));
 }
 
+// 呼吸灯效果实现
+void breathing_light_effect(int delay_ms, uint8_t brightness) {
+    static float breath_level = 0.0f;
+    static int direction = 1;  // 1 = 增加亮度, -1 = 减少亮度
+    
+    // 呼吸灯的颜色 - 使用柔和的白色
+    uint8_t base_r = 255;
+    uint8_t base_g = 220;
+    uint8_t base_b = 180;
+    
+    // 计算当前亮度级别
+    float intensity = breath_level * breath_level; // 使用平方关系使变化看起来更自然
+    
+    // 应用主亮度参数
+    intensity = intensity * brightness / 255.0f;
+    
+    // 设置所有LED为相同的呼吸亮度
+    for (int i = 0; i < WS2812_LEDS_COUNT; i++) {
+        led_strip_set_pixel(led_strip, i, 
+                          base_r * intensity, 
+                          base_g * intensity, 
+                          base_b * intensity);
+    }
+    
+    // 更新显示
+    led_strip_refresh(led_strip);
+    
+    // 更新呼吸级别
+    breath_level += direction * 0.01f;
+    
+    // 改变方向
+    if (breath_level >= 1.0f) {
+        breath_level = 1.0f;
+        direction = -1;
+    } else if (breath_level <= 0.0f) {
+        breath_level = 0.0f;
+        direction = 1;
+    }
+    
+    // 延时
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+}
+
 // 情绪灯光动画任务
 void emotion_animation_task(void *pvParameters) {
     while (1) {
@@ -496,24 +551,20 @@ void emotion_animation_task(void *pvParameters) {
                 break;
                 
             case EMOTION_SAD:
-                // 伤心 - 蓝色闪电
-                blue_lightning_effect(80);
-                break;
-                
-            case EMOTION_SURPRISE:
-                // 惊讶 - 紫色追逐
+                // 伤心 - 紫色追逐
                 purple_chase_effect(30);
                 break;
                 
+            case EMOTION_SURPRISE:
+                // 惊讶 - 蓝色闪电
+                blue_lightning_effect(80);
+                break;
+                
             case EMOTION_RANDOM:
-                // 随机效果 - 根据随机效果模式切换
+                // 随机效果 - 呼吸灯效果
                 if (random_effect.enabled) {
-                    // 根据时间交替显示不同随机效果
-                    if (random_effect.timer % 600 < 300) {
-                        meteor_shower_effect(20, random_effect.brightness);
-                    } else {
-                        random_explosion_effect(30, random_effect.brightness);
-                    }
+                    // 使用呼吸灯效果替代原来的效果
+                    breathing_light_effect(30, random_effect.brightness);
                 } else {
                     clear_leds();
                     vTaskDelay(pdMS_TO_TICKS(100));
@@ -526,6 +577,23 @@ void emotion_animation_task(void *pvParameters) {
                 vTaskDelay(pdMS_TO_TICKS(200));
                 break;
         }
+    }
+}
+
+// 闪烁LED指示CAN总线就绪
+void blink_can_ready(void) {
+    // 闪烁两次绿色灯以指示CAN总线就绪
+    for (int i = 0; i < 2; i++) {
+        // 设置所有LED为绿色
+        for (int j = 0; j < 5; j++) {
+            led_strip_set_pixel(led_strip, j, 0, 255, 0);  // 绿色
+        }
+        led_strip_refresh(led_strip);
+        vTaskDelay(pdMS_TO_TICKS(300));  // 亮300ms
+        
+        // 关闭所有LED
+        clear_leds();
+        vTaskDelay(pdMS_TO_TICKS(300));  // 灭300ms
     }
 }
 
@@ -560,7 +628,7 @@ void app_main(void)
     clear_leds();
     
     // 测试代码：设置一个固定的情绪状态进行测试
-    current_emotion = EMOTION_HAPPY; // 或EMOTION_SAD或EMOTION_SURPRISE进行测试
+    current_emotion = 0; // 初始化为0，不显示任何情绪效果
     
     // 安装TWAI驱动
     ESP_LOGI(TAG, "CAN接收端初始化中...");
@@ -571,6 +639,9 @@ void app_main(void)
     ESP_ERROR_CHECK(twai_start());
     ESP_LOGI(TAG, "TWAI驱动启动成功");
     ESP_LOGI(TAG, "CAN接收端初始化完成，等待接收数据...");
+    
+    // 闪烁绿色LED两次以指示CAN总线就绪
+    blink_can_ready();
     
     // 创建情绪动画任务
     xTaskCreate(emotion_animation_task, "emotion_animation", 4096, NULL, 5, NULL);

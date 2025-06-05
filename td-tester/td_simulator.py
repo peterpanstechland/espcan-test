@@ -42,7 +42,7 @@ class TouchDesignerSimulator:
     def __init__(self, root):
         self.root = root
         self.root.title("TouchDesigner 模拟器")
-        self.root.geometry("600x800")  # 增加高度以适应木鱼状态区域
+        self.root.geometry("700x900")  # 增加窗口宽度和高度
         self.root.resizable(True, True)
         
         # 设置主题颜色
@@ -141,6 +141,51 @@ class TouchDesignerSimulator:
         self.create_emotion_button(control_frame, "伤心 (闪电)", "EMOTION:2", 0, 1, "#1E90FF")  # 蓝色
         self.create_emotion_button(control_frame, "惊讶 (追逐)", "EMOTION:3", 0, 2, "#9932CC")  # 紫色
         self.create_emotion_button(control_frame, "随机效果", "EMOTION:4", 0, 3, "#FF6347")     # 橙红色
+        
+        # 综合情绪控制面板 - 新增加的部分
+        emotions_panel = ttk.LabelFrame(main_frame, text="情绪控制面板", padding="15")
+        emotions_panel.pack(fill=tk.X, padx=10, pady=10)
+        
+        # 情绪说明标签 - 增加字体大小和颜色
+        emotion_label = ttk.Label(
+            emotions_panel, 
+            text="点击以下按钮控制整个系统的声光电机雾化器效果:",
+            font=("", 11, "bold")
+        )
+        emotion_label.grid(row=0, column=0, columnspan=4, sticky=tk.W, padx=5, pady=10)
+        
+        # 定义情绪状态按钮和控制
+        self.create_emotion_control_button(
+            emotions_panel, 
+            "开心", 
+            "状态1\n开心\n彩虹灯效\n电机中速渐变",
+            1, 0, "#FFD700",
+            lambda: self.activate_emotion_state(1)
+        )
+        
+        self.create_emotion_control_button(
+            emotions_panel, 
+            "伤心", 
+            "状态2\n伤心\n紫色追逐\n雨滴声\n雾化器",
+            1, 1, "#1E90FF",
+            lambda: self.activate_emotion_state(2)
+        )
+        
+        self.create_emotion_control_button(
+            emotions_panel, 
+            "惊讶", 
+            "状态3\n惊讶\n蓝色闪电\n雷声\n电机高速",
+            1, 2, "#9932CC",
+            lambda: self.activate_emotion_state(3)
+        )
+        
+        self.create_emotion_control_button(
+            emotions_panel, 
+            "随机", 
+            "状态4\n随机\n呼吸灯\n渐变电机",
+            1, 3, "#FF6347",
+            lambda: self.activate_emotion_state(4)
+        )
         
         # 随机效果控制区域
         random_frame = ttk.LabelFrame(main_frame, text="随机效果控制", padding="10")
@@ -259,6 +304,23 @@ class TouchDesignerSimulator:
         
         # 创建按钮
         ttk.Button(btn_frame, text=text, command=lambda: self.send_command(command)).pack(side=tk.LEFT)
+    
+    def create_emotion_control_button(self, parent, text, description, row, col, color, command):
+        """创建情绪控制按钮，支持多设备控制"""
+        btn_frame = ttk.Frame(parent)
+        btn_frame.grid(row=row, column=col, padx=15, pady=15)  # 增加padding
+        
+        # 创建彩色按钮效果 - 增加大小
+        color_canvas = tk.Canvas(btn_frame, width=40, height=40, bg=color, highlightthickness=1)
+        color_canvas.pack(side=tk.TOP, padx=5, pady=5)
+        
+        # 创建按钮 - 增加宽度和高度
+        button = ttk.Button(btn_frame, text=text, width=15, command=command)
+        button.pack(side=tk.TOP, pady=8)
+        
+        # 创建描述标签 - 使用系统默认字体，增加字体大小
+        ttk.Label(btn_frame, text=description, wraplength=150, justify=tk.CENTER, 
+                 font=("", 10)).pack(side=tk.TOP, pady=5)
     
     def create_console(self):
         """创建控制台输出区域"""
@@ -489,6 +551,48 @@ class TouchDesignerSimulator:
         self.woodfish_hit.set(0)
         self.woodfish_status_canvas.configure(bg="#888888")  # 灰色表示未敲击
         self.woodfish_status_label.configure(text="当前状态: 未敲击")
+    
+    def activate_emotion_state(self, state):
+        """激活指定的情绪状态，控制整个系统"""
+        self.log_message(f"激活情绪状态: {state}")
+        
+        # 1. 发送情绪状态命令控制灯光和声音
+        self.send_command(f"EMOTION:{state}")
+        
+        # 2. 根据情绪状态控制电机
+        if state == 1:  # 开心
+            # 开心状态 - 电机中速模式
+            self.motor_pwm.set(150)
+            self.motor_state.set(1)
+            self.send_command(f"MOTOR:150:1:1")  # PWM=150, 开启, 渐变模式
+            
+        elif state == 2:  # 伤心
+            # 伤心状态 - 电机低速模式
+            self.motor_pwm.set(80)
+            self.motor_state.set(1)
+            self.send_command(f"MOTOR:80:1:0")  # PWM=80, 开启, 固定模式
+            
+            # 开启雾化器
+            self.control_fogger(1)
+            
+        elif state == 3:  # 惊讶
+            # 惊讶状态 - 电机高速模式
+            self.motor_pwm.set(220)
+            self.motor_state.set(1)
+            self.send_command(f"MOTOR:220:1:0")  # PWM=220, 开启, 固定模式
+            
+        elif state == 4:  # 随机
+            # 随机状态 - 电机渐变模式
+            self.motor_pwm.set(180)
+            self.motor_state.set(1)
+            self.send_command(f"MOTOR:180:1:1")  # PWM=180, 开启, 渐变模式
+            
+            # 设置随机效果参数
+            self.random_speed.set(150)
+            self.random_brightness.set(200)
+            self.send_random_command(1)
+        
+        self.log_message(f"情绪状态 {state} 的所有设备已同步更新")
 
 # 主函数
 def main():
