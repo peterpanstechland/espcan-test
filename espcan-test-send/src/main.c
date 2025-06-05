@@ -15,8 +15,8 @@
 #define CAN_RX_PIN GPIO_NUM_4
 
 // 定义木鱼传感器引脚
-#define VIBRATION_SENSOR_PIN GPIO_NUM_18
-#define BUZZER_SENSOR_PIN GPIO_NUM_19
+#define VIBRATION_SENSOR_PIN GPIO_NUM_19
+#define BUZZER_SENSOR_PIN GPIO_NUM_26
 #define WOODEN_FISH_DEBOUNCE_MS 50   // 消抖时间（毫秒）
 
 // UART配置 - 用于接收TouchDesigner的控制命令
