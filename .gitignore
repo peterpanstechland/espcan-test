@@ -12,4 +12,9 @@ build/
 *.bin
 
 # Environment specific files
-.env 
+.env
+
+# ESP-IDF specific files
+sdkconfig
+sdkconfig.old
+sdkconfig.esp32dev 
