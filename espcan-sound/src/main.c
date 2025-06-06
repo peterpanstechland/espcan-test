@@ -16,7 +16,9 @@
 // 定义声音控制引脚
 #define THUNDER_SOUND_PIN CONFIG_THUNDER_SOUND_GPIO  // GPIO23 - 打雷闪电音效（惊讶）
 #define RAIN_SOUND_PIN CONFIG_RAIN_SOUND_GPIO      // GPIO22 - 小雨点音效（伤心）
-#define WOODFISH_SOUND_PIN CONFIG_WOODFISH_SOUND_GPIO  // GPIO16 - 木鱼敲击音效
+#define WOODFISH_SOUND_PIN CONFIG_WOODFISH_SOUND_GPIO  // GPIO19 - 木鱼敲击音效
+#define HAPPY_SOUND_PIN CONFIG_HAPPY_SOUND_GPIO    // GPIO18 - 开心音效
+#define RANDOM_SOUND_PIN CONFIG_RANDOM_SOUND_GPIO  // GPIO17 - 随机音效
 
 // 消息ID
 #define EMOTION_CMD_ID CONFIG_CAN_EMOTION_ID  // 情绪状态命令ID
@@ -39,6 +41,10 @@ static uint8_t current_emotion = 0;
 #define SOUND_DURATION_MS 3000  // 声音持续时间（3秒）
 static uint32_t last_woodfish_sound_time = 0;  // 上次木鱼声音播放时间
 static bool woodfish_sound_active = false;     // 木鱼声音是否正在播放
+static uint32_t last_happy_sound_time = 0;     // 上次开心声音播放时间
+static bool happy_sound_active = false;        // 开心声音是否正在播放
+static uint32_t last_random_sound_time = 0;    // 上次随机声音播放时间
+static bool random_sound_active = false;       // 随机声音是否正在播放
 
 // TWAI配置
 static const twai_general_config_t g_config = {
@@ -65,7 +71,11 @@ void sound_gpio_init(void) {
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << THUNDER_SOUND_PIN) | (1ULL << RAIN_SOUND_PIN) | (1ULL << WOODFISH_SOUND_PIN),
+        .pin_bit_mask = (1ULL << THUNDER_SOUND_PIN) | 
+                         (1ULL << RAIN_SOUND_PIN) | 
+                         (1ULL << WOODFISH_SOUND_PIN) |
+                         (1ULL << HAPPY_SOUND_PIN) |
+                         (1ULL << RANDOM_SOUND_PIN),
         .pull_down_en = 0,
         .pull_up_en = 0
     };
@@ -73,54 +83,101 @@ void sound_gpio_init(void) {
     ESP_ERROR_CHECK(gpio_config(&io_conf));
     
     // 默认关闭所有声音
-    gpio_set_level(THUNDER_SOUND_PIN, 1); // 高电平无效（继电器常闭）
-    gpio_set_level(RAIN_SOUND_PIN, 1);    // 高电平无效（继电器常闭）
+    gpio_set_level(THUNDER_SOUND_PIN, 1);  // 高电平无效（继电器常闭）
+    gpio_set_level(RAIN_SOUND_PIN, 1);     // 高电平无效（继电器常闭）
     gpio_set_level(WOODFISH_SOUND_PIN, 1); // 高电平无效（继电器常闭）
+    gpio_set_level(HAPPY_SOUND_PIN, 1);    // 高电平无效（继电器常闭）
+    gpio_set_level(RANDOM_SOUND_PIN, 1);   // 高电平无效（继电器常闭）
     
     ESP_LOGI(TAG, "声音控制GPIO初始化完成");
     ESP_LOGI(TAG, "打雷闪电音效引脚: %d", THUNDER_SOUND_PIN);
     ESP_LOGI(TAG, "小雨点音效引脚: %d", RAIN_SOUND_PIN);
     ESP_LOGI(TAG, "木鱼敲击音效引脚: %d", WOODFISH_SOUND_PIN);
+    ESP_LOGI(TAG, "开心音效引脚: %d", HAPPY_SOUND_PIN);
+    ESP_LOGI(TAG, "随机音效引脚: %d", RANDOM_SOUND_PIN);
 }
 
 // 控制声音
 void control_sounds(uint8_t emotion) {
     uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
     
-    // 如果是木鱼敲击且上次播放还没结束，跳过这次触发
-    if (emotion == WOODFISH_HIT && woodfish_sound_active) {
-        if (current_time - last_woodfish_sound_time < SOUND_DURATION_MS) {
-            ESP_LOGI(TAG, "木鱼声音播放中，跳过本次触发");
-            return;
-        } else {
-            // 如果已经超时，重置状态
-            woodfish_sound_active = false;
-        }
+    // 检查特殊音效是否正在播放中
+    bool check_woodfish = (emotion == WOODFISH_HIT && woodfish_sound_active);
+    bool check_happy = (emotion == EMOTION_HAPPY && happy_sound_active);
+    bool check_random = (emotion == EMOTION_RANDOM && random_sound_active);
+    
+    // 如果特定音效正在播放且还未结束，跳过这次触发
+    if (check_woodfish && (current_time - last_woodfish_sound_time < SOUND_DURATION_MS)) {
+        ESP_LOGI(TAG, "木鱼声音播放中，跳过本次触发");
+        return;
+    } else if (check_happy && (current_time - last_happy_sound_time < SOUND_DURATION_MS)) {
+        ESP_LOGI(TAG, "开心声音播放中，跳过本次触发");
+        return;
+    } else if (check_random && (current_time - last_random_sound_time < SOUND_DURATION_MS)) {
+        ESP_LOGI(TAG, "随机声音播放中，跳过本次触发");
+        return;
     }
     
-    // 首先关闭所有声音（但不关闭正在播放的木鱼声音）
-    if (emotion != WOODFISH_HIT || !woodfish_sound_active) {
+    // 重置超时的声音状态
+    if (check_woodfish && (current_time - last_woodfish_sound_time >= SOUND_DURATION_MS)) {
+        woodfish_sound_active = false;
+    }
+    if (check_happy && (current_time - last_happy_sound_time >= SOUND_DURATION_MS)) {
+        happy_sound_active = false;
+    }
+    if (check_random && (current_time - last_random_sound_time >= SOUND_DURATION_MS)) {
+        random_sound_active = false;
+    }
+    
+    // 关闭所有不在播放的声音引脚
+    if (!woodfish_sound_active || (emotion != WOODFISH_HIT && emotion != 0)) {
+        gpio_set_level(WOODFISH_SOUND_PIN, 1); // 高电平无效
+    }
+    if (!happy_sound_active || (emotion != EMOTION_HAPPY && emotion != 0)) {
+        gpio_set_level(HAPPY_SOUND_PIN, 1); // 高电平无效
+    }
+    if (!random_sound_active || (emotion != EMOTION_RANDOM && emotion != 0)) {
+        gpio_set_level(RANDOM_SOUND_PIN, 1); // 高电平无效
+    }
+    
+    // 对于即时音效（不需要跟踪播放时间的），直接关闭
+    if (emotion != EMOTION_SURPRISE && emotion != EMOTION_SAD) {
         gpio_set_level(THUNDER_SOUND_PIN, 1); // 高电平无效
         gpio_set_level(RAIN_SOUND_PIN, 1);    // 高电平无效
-        
-        // 只有在没有木鱼声音播放时才关闭木鱼声音引脚
-        if (!woodfish_sound_active) {
-            gpio_set_level(WOODFISH_SOUND_PIN, 1); // 高电平无效
-        }
     }
     
     // 根据情绪状态控制声音
     switch (emotion) {
-        case EMOTION_SURPRISE:
-            // 惊讶 - 打雷闪电音效
-            ESP_LOGI(TAG, "触发打雷闪电音效");
-            gpio_set_level(THUNDER_SOUND_PIN, 0); // 低电平有效
+        case EMOTION_HAPPY:
+            // 开心 - 开心音效
+            if (!happy_sound_active) {
+                ESP_LOGI(TAG, "触发开心音效");
+                gpio_set_level(HAPPY_SOUND_PIN, 0); // 低电平有效
+                last_happy_sound_time = current_time;
+                happy_sound_active = true;
+            }
             break;
             
         case EMOTION_SAD:
             // 伤心 - 小雨点音效
             ESP_LOGI(TAG, "触发小雨点音效");
             gpio_set_level(RAIN_SOUND_PIN, 0); // 低电平有效
+            break;
+            
+        case EMOTION_SURPRISE:
+            // 惊讶 - 打雷闪电音效
+            ESP_LOGI(TAG, "触发打雷闪电音效");
+            gpio_set_level(THUNDER_SOUND_PIN, 0); // 低电平有效
+            break;
+            
+        case EMOTION_RANDOM:
+            // 随机效果 - 随机音效
+            if (!random_sound_active) {
+                ESP_LOGI(TAG, "触发随机音效");
+                gpio_set_level(RANDOM_SOUND_PIN, 0); // 低电平有效
+                last_random_sound_time = current_time;
+                random_sound_active = true;
+            }
             break;
             
         case WOODFISH_HIT:
@@ -167,6 +224,20 @@ void sound_timeout_task(void *pvParameters) {
             woodfish_sound_active = false;
         }
         
+        // 检查开心声音是否需要停止
+        if (happy_sound_active && (current_time - last_happy_sound_time >= SOUND_DURATION_MS)) {
+            ESP_LOGI(TAG, "开心声音播放完毕");
+            gpio_set_level(HAPPY_SOUND_PIN, 1); // 高电平无效（关闭声音）
+            happy_sound_active = false;
+        }
+        
+        // 检查随机声音是否需要停止
+        if (random_sound_active && (current_time - last_random_sound_time >= SOUND_DURATION_MS)) {
+            ESP_LOGI(TAG, "随机声音播放完毕");
+            gpio_set_level(RANDOM_SOUND_PIN, 1); // 高电平无效（关闭声音）
+            random_sound_active = false;
+        }
+        
         // 短暂延时
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -187,7 +258,7 @@ void handle_emotion_command(twai_message_t *message) {
     // 根据情绪状态输出日志
     switch (emotion_state) {
         case EMOTION_HAPPY:
-            ESP_LOGI(TAG, "情绪状态设置为: 开心");
+            ESP_LOGI(TAG, "情绪状态设置为: 开心 (开心音效)");
             break;
             
         case EMOTION_SAD:
@@ -199,7 +270,7 @@ void handle_emotion_command(twai_message_t *message) {
             break;
             
         case EMOTION_RANDOM:
-            ESP_LOGI(TAG, "情绪状态设置为: 随机效果");
+            ESP_LOGI(TAG, "情绪状态设置为: 随机效果 (随机音效)");
             break;
             
         default:
