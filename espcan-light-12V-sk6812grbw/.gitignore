@@ -1,0 +1,34 @@
+# Build directories
+.pio/
+build/
+.vscode/
+.DS_Store
+
+# ESP-IDF specific
+sdkconfig
+sdkconfig.old
+build/
+
+# PlatformIO specific
+.pioenvs
+.piolibdeps
+lib/
+.clang_complete
+.gcc-flags.json
+
+# IDE specific
+*.swp
+*.swo
+*~
+.idea/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp 

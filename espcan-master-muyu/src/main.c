@@ -37,11 +37,12 @@
 #define LED_CMD_OFF 0
 #define LED_CMD_ON 1
 
-// 情绪状态命令
+// 情绪状态命令 - 与espcan-light-12V-sk6812grbw完全匹配
 #define EMOTION_HAPPY 1    // 开心 - 彩虹效果
-#define EMOTION_SAD 2      // 伤心 - 蓝色闪电
-#define EMOTION_SURPRISE 3 // 惊讶 - 紫色追逐
-#define EMOTION_RANDOM 4   // 随机效果
+#define EMOTION_SAD 2      // 伤心 - 闪电效果
+#define EMOTION_SURPRISE 3 // 惊讶 - 紫色追逐效果
+#define EMOTION_NEUTRAL 4  // 中性 - 呼吸灯切换颜色效果
+#define EMOTION_RANDOM 4   // 兼容性别名
 
 // 随机效果命令
 #define RANDOM_START 1     // 开始随机效果
@@ -116,19 +117,19 @@ void send_emotion_command(uint8_t emotion_state) {
     const char* emotion_name;
     switch (emotion_state) {
         case EMOTION_HAPPY:
-            emotion_name = "开心";
+            emotion_name = "开心 (彩虹效果)";
             break;
         case EMOTION_SAD:
-            emotion_name = "伤心";
+            emotion_name = "伤心 (闪电效果)";
             break;
         case EMOTION_SURPRISE:
-            emotion_name = "惊讶";
+            emotion_name = "惊讶 (紫色追逐效果)";
             break;
-        case EMOTION_RANDOM:
-            emotion_name = "随机";
+        case EMOTION_NEUTRAL:
+            emotion_name = "中性 (呼吸灯切换颜色效果)";
             break;
         default:
-            emotion_name = "未知";
+            emotion_name = "未知/关闭";
             break;
     }
     
@@ -351,9 +352,12 @@ void process_touchdesigner_command(const char* cmd) {
         } else if (strcmp(expr_type, "SURPRISE") == 0) {
             ESP_LOGI(TAG, "设置表情: 惊讶");
             send_emotion_command(EMOTION_SURPRISE);
+        } else if (strcmp(expr_type, "NEUTRAL") == 0) {
+            ESP_LOGI(TAG, "设置表情: 中性");
+            send_emotion_command(EMOTION_NEUTRAL);
         } else if (strcmp(expr_type, "UNKNOWN") == 0) {
-            ESP_LOGI(TAG, "设置表情: 随机");
-            send_emotion_command(EMOTION_RANDOM);
+            ESP_LOGI(TAG, "设置表情: 随机/中性");
+            send_emotion_command(EMOTION_NEUTRAL);
         } else {
             ESP_LOGW(TAG, "未知表情类型: %s", expr_type);
         }
@@ -469,24 +473,26 @@ void app_main(void)
     uart_write_bytes(UART_NUM, welcome_msg, strlen(welcome_msg));
     
     // 发送命令帮助信息
-    const char *help_msg = "命令格式:\n"
-                          "EMOTION:1 - 设置开心情绪\n"
-                          "EMOTION:2 - 设置伤心情绪\n"
-                          "EMOTION:3 - 设置惊讶情绪\n"
-                          "EMOTION:4 - 设置随机情绪\n"
-                          "EXPRESSION:HAPPY - 设置开心表情\n"
-                          "EXPRESSION:SAD - 设置伤心表情\n"
-                          "EXPRESSION:SURPRISE - 设置惊讶表情\n"
-                          "EXPRESSION:UNKNOWN - 设置随机表情\n"
-                          "RANDOM:1:speed:brightness - 启动随机效果\n"
-                          "RANDOM:0 - 停止随机效果\n"
-                          "LED:1 - 打开LED\n"
-                          "LED:0 - 关闭LED\n"
-                          "MOTOR:pwm:state:fade - 控制电机(pwm=0-255, state=0/1, fade=0/1)\n"
-                          "FOGGER:1 - 开启雾化器\n"
-                          "FOGGER:0 - 关闭雾化器\n"
-                          "WOODFISH_TEST - 模拟木鱼敲击事件\n"
-                          "* 木鱼敲击事件将自动发送 *\n";
+    const char *help_msg = "🎮 SK6812 GRBW 灯光控制命令:\n"
+                          "EMOTION:1 - 开心 (彩虹效果)\n"
+                          "EMOTION:2 - 伤心 (闪电效果)\n"
+                          "EMOTION:3 - 惊讶 (紫色追逐效果)\n"
+                          "EMOTION:4 - 中性 (呼吸灯切换颜色)\n"
+                          "EMOTION:0 - 关闭所有效果\n"
+                          "\n🎭 TouchDesigner表情命令:\n"
+                          "EXPRESSION:HAPPY - 开心表情 (彩虹)\n"
+                          "EXPRESSION:SAD - 伤心表情 (闪电)\n"
+                          "EXPRESSION:SURPRISE - 惊讶表情 (紫色追逐)\n"
+                          "EXPRESSION:NEUTRAL - 中性表情 (呼吸灯)\n"
+                          "EXPRESSION:UNKNOWN - 默认中性表情\n"
+                          "\n⚡ 其他设备控制:\n"
+                          "LED:1/0 - 开关板载LED\n"
+                          "MOTOR:pwm:state:fade - 电机控制\n"
+                          "FOGGER:1/0 - 雾化器控制\n"
+                          "RANDOM:1:speed:brightness - 随机效果\n"
+                          "\n🥢 木鱼测试:\n"
+                          "WOODFISH_TEST - 模拟敲击事件\n"
+                          "* 真实木鱼敲击将自动检测并发送 *\n";
     uart_write_bytes(UART_NUM, help_msg, strlen(help_msg));
 
     // 接收CAN消息变量
