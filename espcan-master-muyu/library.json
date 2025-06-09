@@ -1,0 +1,22 @@
+{
+  "name": "espcan-master-muyu",
+  "version": "1.0.0",
+  "description": "ESP32 CAN bus project",
+  "keywords": "ESP32, CAN, PlatformIO",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/espcan-master-muyu.git"
+  },
+  "authors": [
+    {
+      "name": "Project Author",
+      "email": "author@example.com"
+    }
+  ],
+  "license": "MIT",
+  "frameworks": "espidf",
+  "platforms": "espressif32",
+  "dependencies": {
+    "sandeepmistry/arduino-CAN": "^0.3.1"
+  }
+} 

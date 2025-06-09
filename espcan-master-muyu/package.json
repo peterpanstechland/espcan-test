@@ -1,0 +1,17 @@
+{
+  "name": "espcan-master-muyu",
+  "version": "1.0.0",
+  "description": "ESP32 CAN bus project",
+  "main": "src/main.c",
+  "scripts": {
+    "build": "platformio run",
+    "upload": "platformio run --target upload",
+    "monitor": "platformio device monitor"
+  },
+  "keywords": ["ESP32", "CAN", "PlatformIO"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "sandeepmistry/CAN": "^0.3.1"
+  }
+} 

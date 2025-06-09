@@ -37,11 +37,11 @@
 #define LED_CMD_OFF 0
 #define LED_CMD_ON 1
 
-// 情绪状态命令 - 与espcan-light-12V-sk6812grbw完全匹配
+// 情绪状态命令 - 与TouchDesigner映射对齐
+#define EMOTION_NEUTRAL 0  // 中性 - 呼吸灯切换颜色效果
 #define EMOTION_HAPPY 1    // 开心 - 彩虹效果
 #define EMOTION_SAD 2      // 伤心 - 闪电效果
 #define EMOTION_SURPRISE 3 // 惊讶 - 紫色追逐效果
-#define EMOTION_NEUTRAL 4  // 中性 - 呼吸灯切换颜色效果
 #define EMOTION_RANDOM 4   // 兼容性别名
 
 // 随机效果命令
@@ -293,8 +293,7 @@ void wooden_fish_sensors_init(void) {
 
 // 木鱼敲击检测任务
 void wooden_fish_detection_task(void *pvParameters) {
-    bool prev_vibration_state = false;
-    bool prev_buzzer_state = false;
+    // 只保留最基本的变量
     uint32_t last_hit_time = 0;
     
     while (1) {
@@ -317,10 +316,6 @@ void wooden_fish_detection_task(void *pvParameters) {
             send_wooden_fish_hit_event();
         }
         
-        // 记住当前状态
-        prev_vibration_state = vibration_state;
-        prev_buzzer_state = buzzer_state;
-        
         // 短暂延时
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -330,17 +325,45 @@ void wooden_fish_detection_task(void *pvParameters) {
 void process_touchdesigner_command(const char* cmd) {
     ESP_LOGI(TAG, "收到TouchDesigner命令: %s", cmd);
     
+    // 检查单个数字输入 (0-3)
+    if (strlen(cmd) == 1 && cmd[0] >= '0' && cmd[0] <= '3') {
+        int emotion_val = cmd[0] - '0';
+        ESP_LOGI(TAG, "收到情绪数字命令: %d", emotion_val);
+        
+        const char* emotion_name = "未知";  // 初始化默认值
+        switch (emotion_val) {
+            case 0:
+                emotion_name = "neutral (中性)";
+                break;
+            case 1:
+                emotion_name = "happy (开心)";
+                break;
+            case 2:
+                emotion_name = "sad (伤心)";
+                break;
+            case 3:
+                emotion_name = "surprise (惊讶)";
+                break;
+            default:
+                emotion_name = "未知";  // 再次设置以确保安全
+                break;
+        }
+        ESP_LOGI(TAG, "设置情绪状态: %s", emotion_name);
+        send_emotion_command((uint8_t)emotion_val);
+        return;
+    }
+    
     // 解析命令
     if (strncmp(cmd, "EMOTION:", 8) == 0) {
-        // 情绪控制命令格式: "EMOTION:1" (1=开心, 2=伤心, 3=惊讶, 4=随机)
+        // 情绪控制命令格式: "EMOTION:1" (0=中性, 1=开心, 2=伤心, 3=惊讶)
         int emotion_val = atoi(cmd + 8);
-        if (emotion_val >= 1 && emotion_val <= 4) {
+        if (emotion_val >= 0 && emotion_val <= 3) {
             send_emotion_command((uint8_t)emotion_val);
         } else {
             ESP_LOGE(TAG, "情绪值无效: %d", emotion_val);
         }
     } else if (strncmp(cmd, "EXPRESSION:", 11) == 0) {
-        // 表情控制命令格式: "EXPRESSION:HAPPY" (HAPPY=开心, SAD=伤心, SURPRISE=惊讶)
+        // 表情控制命令格式: "EXPRESSION:HAPPY" (HAPPY=开心, SAD=伤心, SURPRISE=惊讶, NEUTRAL=中性)
         const char* expr_type = cmd + 11;
         
         if (strcmp(expr_type, "HAPPY") == 0) {
@@ -399,6 +422,9 @@ void process_touchdesigner_command(const char* cmd) {
         // 木鱼敲击测试命令 - 模拟敲击事件
         ESP_LOGI(TAG, "模拟木鱼敲击事件");
         send_wooden_fish_hit_event();
+    } else if (strlen(cmd) == 1 && cmd[0] >= '0' && cmd[0] <= '9') {
+        // 单个数字，但不在0-3范围内的处理
+        ESP_LOGW(TAG, "收到数字命令 %c，但只支持0-3的情绪值", cmd[0]);
     } else {
         ESP_LOGW(TAG, "未知命令格式: %s", cmd);
     }
@@ -474,16 +500,16 @@ void app_main(void)
     
     // 发送命令帮助信息
     const char *help_msg = "🎮 SK6812 GRBW 灯光控制命令:\n"
-                          "EMOTION:1 - 开心 (彩虹效果)\n"
-                          "EMOTION:2 - 伤心 (闪电效果)\n"
-                          "EMOTION:3 - 惊讶 (紫色追逐效果)\n"
-                          "EMOTION:4 - 中性 (呼吸灯切换颜色)\n"
-                          "EMOTION:0 - 关闭所有效果\n"
+                          "0 - 中性 (呼吸灯切换颜色)\n"
+                          "1 - 开心 (彩虹效果)\n"
+                          "2 - 伤心 (闪电效果)\n"
+                          "3 - 惊讶 (紫色追逐效果)\n"
+                          "EMOTION:0-3 - 同上 (兼容旧格式)\n"
                           "\n🎭 TouchDesigner表情命令:\n"
+                          "EXPRESSION:NEUTRAL - 中性表情 (呼吸灯)\n"
                           "EXPRESSION:HAPPY - 开心表情 (彩虹)\n"
                           "EXPRESSION:SAD - 伤心表情 (闪电)\n"
                           "EXPRESSION:SURPRISE - 惊讶表情 (紫色追逐)\n"
-                          "EXPRESSION:NEUTRAL - 中性表情 (呼吸灯)\n"
                           "EXPRESSION:UNKNOWN - 默认中性表情\n"
                           "\n⚡ 其他设备控制:\n"
                           "LED:1/0 - 开关板载LED\n"
