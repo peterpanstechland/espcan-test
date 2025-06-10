@@ -38,10 +38,10 @@
 #define LED_CMD_ON 1
 
 // 情绪状态命令 - 与TouchDesigner映射对齐
-#define EMOTION_NEUTRAL 0  // 中性 - 呼吸灯切换颜色效果
-#define EMOTION_HAPPY 1    // 开心 - 彩虹效果
-#define EMOTION_SAD 2      // 伤心 - 闪电效果
-#define EMOTION_SURPRISE 3 // 惊讶 - 紫色追逐效果
+#define EMOTION_NEUTRAL 0  // 中性 - 呼吸灯切换颜色效果 - 音效：中性
+#define EMOTION_HAPPY 1    // 开心 - 彩虹效果 - 音效：开心
+#define EMOTION_SAD 2      // 伤心 - 紫色追逐效果 - 音效：小雨点，开启雾化器
+#define EMOTION_SURPRISE 3 // 惊讶 - 闪电效果 - 音效：打雷闪电，电机开启
 #define EMOTION_RANDOM 4   // 兼容性别名
 
 // 随机效果命令
@@ -54,6 +54,19 @@
 
 // 日志标签
 static const char *TAG = "MASTER_MUYU";
+
+// 函数声明（解决编译顺序问题）
+void send_led_command(uint8_t led_state);
+void send_emotion_command(uint8_t emotion_state);
+void send_random_command(uint8_t random_state, uint8_t param1, uint8_t param2);
+void send_motor_command(uint8_t pwm_duty, uint8_t on_off, uint8_t fade_mode);
+void send_fogger_command(uint8_t fogger_state);
+void send_wooden_fish_hit_event(void);
+void uart_init(void);
+void wooden_fish_sensors_init(void);
+void wooden_fish_detection_task(void *pvParameters);
+void process_touchdesigner_command(const char* cmd);
+void uart_rx_task(void *pvParameters);
 
 // TWAI配置
 static const twai_general_config_t g_config = {
@@ -117,16 +130,20 @@ void send_emotion_command(uint8_t emotion_state) {
     const char* emotion_name;
     switch (emotion_state) {
         case EMOTION_HAPPY:
-            emotion_name = "开心 (彩虹效果)";
+            emotion_name = "开心 (彩虹效果) 音效：开心";
             break;
         case EMOTION_SAD:
-            emotion_name = "伤心 (闪电效果)";
+            emotion_name = "伤心 (紫色追逐效果) 音效：小雨点";
+            // 自动开启雾化器
+            send_fogger_command(FOGGER_CMD_ON);
             break;
         case EMOTION_SURPRISE:
-            emotion_name = "惊讶 (紫色追逐效果)";
+            emotion_name = "惊讶 (闪电效果) 音效：打雷闪电";
+            // 自动开启电机
+            send_motor_command(200, 1, 0);  // PWM=200, 状态=启动, 模式=固定
             break;
         case EMOTION_NEUTRAL:
-            emotion_name = "中性 (呼吸灯切换颜色效果)";
+            emotion_name = "中性 (呼吸灯切换颜色效果) 音效：中性";
             break;
         default:
             emotion_name = "未知/关闭";
@@ -134,7 +151,12 @@ void send_emotion_command(uint8_t emotion_state) {
     }
     
     if (result == ESP_OK) {
-        ESP_LOGI(TAG, "发送情绪状态命令成功: %s", emotion_name);
+        ESP_LOGI(TAG, "发送情绪状态命令成功: %s 灯光：%s", 
+            emotion_state == EMOTION_HAPPY ? "开心" :
+            emotion_state == EMOTION_SAD ? "伤心" :
+            emotion_state == EMOTION_SURPRISE ? "惊讶" : 
+            emotion_state == EMOTION_NEUTRAL ? "中性" : "未知",
+            emotion_name);
     } else {
         ESP_LOGE(TAG, "发送情绪状态命令失败: %s", esp_err_to_name(result));
     }
@@ -325,10 +347,32 @@ void wooden_fish_detection_task(void *pvParameters) {
 void process_touchdesigner_command(const char* cmd) {
     ESP_LOGI(TAG, "收到TouchDesigner命令: %s", cmd);
     
-    // 检查单个数字输入 (0-3)
-    if (strlen(cmd) == 1 && cmd[0] >= '0' && cmd[0] <= '3') {
+    // 检查单个数字输入 (0-4)
+    if (strlen(cmd) == 1 && cmd[0] >= '0' && cmd[0] <= '4') {
         int emotion_val = cmd[0] - '0';
         ESP_LOGI(TAG, "收到情绪数字命令: %d", emotion_val);
+        
+        // 特殊处理状态4 - 关闭所有子系统
+        if (emotion_val == 4) {
+            ESP_LOGI(TAG, "关闭所有子系统");
+            // 关闭LED灯带
+            send_emotion_command(EMOTION_NEUTRAL);  // 设为中性状态
+            send_led_command(LED_CMD_OFF);          // 关闭LED
+            
+            // 关闭雾化器
+            send_fogger_command(FOGGER_CMD_OFF);
+            
+            // 关闭电机
+            send_motor_command(0, 0, 0);  // PWM=0, 状态=停止, 模式=固定
+            
+            // 关闭随机效果
+            send_random_command(RANDOM_STOP, 0, 0);
+            
+            // 发送确认消息到TouchDesigner
+            const char *shutdown_msg = "所有子系统已关闭\n";
+            uart_write_bytes(UART_NUM, shutdown_msg, strlen(shutdown_msg));
+            return;
+        }
         
         const char* emotion_name = "未知";  // 初始化默认值
         switch (emotion_val) {
@@ -348,6 +392,18 @@ void process_touchdesigner_command(const char* cmd) {
                 emotion_name = "未知";  // 再次设置以确保安全
                 break;
         }
+        
+        // 在切换到新状态之前，根据需要关闭特定子系统
+        if (emotion_val != EMOTION_SAD) {
+            // 不是伤心状态，确保雾化器关闭
+            send_fogger_command(FOGGER_CMD_OFF);
+        }
+        
+        if (emotion_val != EMOTION_SURPRISE) {
+            // 不是惊讶状态，确保电机关闭
+            send_motor_command(0, 0, 0);
+        }
+        
         ESP_LOGI(TAG, "设置情绪状态: %s", emotion_name);
         send_emotion_command((uint8_t)emotion_val);
         return;
@@ -358,6 +414,17 @@ void process_touchdesigner_command(const char* cmd) {
         // 情绪控制命令格式: "EMOTION:1" (0=中性, 1=开心, 2=伤心, 3=惊讶)
         int emotion_val = atoi(cmd + 8);
         if (emotion_val >= 0 && emotion_val <= 3) {
+            // 在切换到新状态之前，根据需要关闭特定子系统
+            if (emotion_val != EMOTION_SAD) {
+                // 不是伤心状态，确保雾化器关闭
+                send_fogger_command(FOGGER_CMD_OFF);
+            }
+            
+            if (emotion_val != EMOTION_SURPRISE) {
+                // 不是惊讶状态，确保电机关闭
+                send_motor_command(0, 0, 0);
+            }
+            
             send_emotion_command((uint8_t)emotion_val);
         } else {
             ESP_LOGE(TAG, "情绪值无效: %d", emotion_val);
@@ -368,18 +435,33 @@ void process_touchdesigner_command(const char* cmd) {
         
         if (strcmp(expr_type, "HAPPY") == 0) {
             ESP_LOGI(TAG, "设置表情: 开心");
+            // 确保关闭不需要的子系统
+            send_fogger_command(FOGGER_CMD_OFF);
+            send_motor_command(0, 0, 0);
             send_emotion_command(EMOTION_HAPPY);
         } else if (strcmp(expr_type, "SAD") == 0) {
             ESP_LOGI(TAG, "设置表情: 伤心");
+            // 确保关闭不需要的子系统
+            send_motor_command(0, 0, 0);
+            // 雾化器会在send_emotion_command中自动开启
             send_emotion_command(EMOTION_SAD);
         } else if (strcmp(expr_type, "SURPRISE") == 0) {
             ESP_LOGI(TAG, "设置表情: 惊讶");
+            // 确保关闭不需要的子系统
+            send_fogger_command(FOGGER_CMD_OFF);
+            // 电机会在send_emotion_command中自动开启
             send_emotion_command(EMOTION_SURPRISE);
         } else if (strcmp(expr_type, "NEUTRAL") == 0) {
             ESP_LOGI(TAG, "设置表情: 中性");
+            // 确保关闭所有额外子系统
+            send_fogger_command(FOGGER_CMD_OFF);
+            send_motor_command(0, 0, 0);
             send_emotion_command(EMOTION_NEUTRAL);
         } else if (strcmp(expr_type, "UNKNOWN") == 0) {
             ESP_LOGI(TAG, "设置表情: 随机/中性");
+            // 确保关闭所有额外子系统
+            send_fogger_command(FOGGER_CMD_OFF);
+            send_motor_command(0, 0, 0);
             send_emotion_command(EMOTION_NEUTRAL);
         } else {
             ESP_LOGW(TAG, "未知表情类型: %s", expr_type);
@@ -422,9 +504,9 @@ void process_touchdesigner_command(const char* cmd) {
         // 木鱼敲击测试命令 - 模拟敲击事件
         ESP_LOGI(TAG, "模拟木鱼敲击事件");
         send_wooden_fish_hit_event();
-    } else if (strlen(cmd) == 1 && cmd[0] >= '0' && cmd[0] <= '9') {
-        // 单个数字，但不在0-3范围内的处理
-        ESP_LOGW(TAG, "收到数字命令 %c，但只支持0-3的情绪值", cmd[0]);
+    } else if (strlen(cmd) == 1 && cmd[0] >= '5' && cmd[0] <= '9') {
+        // 单个数字，但不在0-4范围内的处理
+        ESP_LOGW(TAG, "收到数字命令 %c，但只支持0-4的情绪值/控制命令", cmd[0]);
     } else {
         ESP_LOGW(TAG, "未知命令格式: %s", cmd);
     }
@@ -432,40 +514,34 @@ void process_touchdesigner_command(const char* cmd) {
 
 // UART接收任务
 void uart_rx_task(void *pvParameters) {
-    char data[UART_BUF_SIZE];
-    char command[UART_BUF_SIZE];
+    uint8_t data[UART_BUF_SIZE];
+    char command[UART_BUF_SIZE] = {0};
     int cmd_index = 0;
-    
+
     while (1) {
-        // 读取UART数据
-        int len = uart_read_bytes(UART_NUM, (uint8_t*)data, UART_BUF_SIZE - 1, pdMS_TO_TICKS(UART_RX_TIMEOUT_MS));
-        
+        int len = uart_read_bytes(UART_NUM, data, UART_BUF_SIZE - 1, pdMS_TO_TICKS(UART_RX_TIMEOUT_MS));
         if (len > 0) {
-            data[len] = 0; // 确保字符串结束
-            
-            // 打印原始接收到的数据（调试用）
-            ESP_LOGI(TAG, "收到原始数据: %s", data);
-            
-            // 处理接收到的数据
             for (int i = 0; i < len; i++) {
-                if (data[i] == '\n' || data[i] == '\r') {
-                    // 命令结束
+                char ch = (char)data[i];
+
+                if (ch == '\r' || ch == '\n') {
                     if (cmd_index > 0) {
-                        command[cmd_index] = 0; // 字符串结束符
+                        command[cmd_index] = '\0';
                         ESP_LOGI(TAG, "处理命令: %s", command);
                         process_touchdesigner_command(command);
-                        cmd_index = 0; // 重置命令缓冲区
+                        cmd_index = 0; // 重置缓冲
+                        memset(command, 0, sizeof(command)); // 清空内容防止干扰
                     }
-                } else {
-                    // 添加到命令缓冲区
-                    if (cmd_index < UART_BUF_SIZE - 1) {
-                        command[cmd_index++] = data[i];
-                    }
+                    continue;
+                }
+
+                // 普通字符追加到命令缓冲区
+                if (cmd_index < UART_BUF_SIZE - 1) {
+                    command[cmd_index++] = ch;
                 }
             }
         }
-        
-        // 短暂延时
+
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -500,10 +576,11 @@ void app_main(void)
     
     // 发送命令帮助信息
     const char *help_msg = "🎮 SK6812 GRBW 灯光控制命令:\n"
-                          "0 - 中性 (呼吸灯切换颜色)\n"
-                          "1 - 开心 (彩虹效果)\n"
-                          "2 - 伤心 (闪电效果)\n"
-                          "3 - 惊讶 (紫色追逐效果)\n"
+                          "0 - 中性 (呼吸灯切换颜色效果) - 音效：中性\n"
+                          "1 - 开心 (彩虹效果) - 音效：开心\n"
+                          "2 - 伤心 (紫色追逐效果) - 音效：小雨点，开启雾化器\n"
+                          "3 - 惊讶 (闪电效果) - 音效：打雷闪电，电机开启\n"
+                          "4 - 关闭所有子系统 (LED灯带、雾化器、电机等)\n"
                           "EMOTION:0-3 - 同上 (兼容旧格式)\n"
                           "\n🎭 TouchDesigner表情命令:\n"
                           "EXPRESSION:NEUTRAL - 中性表情 (呼吸灯)\n"
@@ -520,6 +597,21 @@ void app_main(void)
                           "WOODFISH_TEST - 模拟敲击事件\n"
                           "* 真实木鱼敲击将自动检测并发送 *\n";
     uart_write_bytes(UART_NUM, help_msg, strlen(help_msg));
+    
+    // 发送情绪状态说明
+    const char *emotion_info[] = {
+        "INFO:情绪状态0=中性(呼吸灯切换颜色效果,音效:中性)\n",
+        "INFO:情绪状态1=开心(彩虹效果,音效:开心)\n",
+        "INFO:情绪状态2=伤心(紫色追逐效果,音效:小雨点,开启雾化器)\n",
+        "INFO:情绪状态3=惊讶(闪电效果,音效:打雷闪电,电机开启)\n",
+        "INFO:情绪状态4=关闭所有子系统\n",
+        NULL
+    };
+    
+    for (int i = 0; emotion_info[i] != NULL; i++) {
+        uart_write_bytes(UART_NUM, emotion_info[i], strlen(emotion_info[i]));
+        vTaskDelay(pdMS_TO_TICKS(50));  // 短暂延时确保消息接收
+    }
 
     // 接收CAN消息变量
     twai_message_t rx_message;
