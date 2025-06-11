@@ -24,8 +24,10 @@
 #define CAN_TX_PIN GPIO_NUM_5
 #define CAN_RX_PIN GPIO_NUM_4
 #define LED_PIN GPIO_NUM_2
-#define WS2812_PIN GPIO_NUM_18
-#define WS2812_LEDS_COUNT 900
+#define WS2812_PIN_1 GPIO_NUM_18
+#define WS2812_PIN_2 GPIO_NUM_17
+#define WS2812_LEDS_PER_STRIP 900
+#define WS2812_LEDS_TOTAL (WS2812_LEDS_PER_STRIP * 2)  // 总共1800个灯
 #define RMT_RESOLUTION_HZ 10000000
 
 // SK6812时序定义 (与WS2812B时序类似)
@@ -42,8 +44,8 @@
 
 // 情绪状态命令
 #define EMOTION_HAPPY 1      // 开心 - 彩虹效果
-#define EMOTION_SAD 2        // 伤心 - 闪电效果  
-#define EMOTION_SURPRISE 3   // 惊讶 - 紫色追逐效果
+#define EMOTION_SAD 2        // 伤心 - 紫色追逐效果  
+#define EMOTION_SURPRISE 3   // 惊讶 - 闪电效果
 #define EMOTION_NEUTRAL 4    // 中性 - 呼吸灯切换颜色效果
 #define EMOTION_RANDOM 4     // 兼容性别名
 
@@ -51,8 +53,10 @@ const char *TAG = "ESPCAN_SK6812";
 static uint8_t current_emotion = 0;
 
 // RMT相关句柄
-rmt_channel_handle_t rmt_channel = NULL;
-rmt_encoder_handle_t led_encoder = NULL;
+rmt_channel_handle_t rmt_channel_1 = NULL;
+rmt_channel_handle_t rmt_channel_2 = NULL;
+rmt_encoder_handle_t led_encoder_1 = NULL;
+rmt_encoder_handle_t led_encoder_2 = NULL;
 
 // TWAI配置
 static const twai_general_config_t g_config = {
@@ -93,11 +97,11 @@ void emotion_animation_task(void *pvParameters);
  */
 static bool initRMT(void)
 {
-    ESP_LOGI(TAG, "初始化RMT通道，GPIO: %d", WS2812_PIN);
+    ESP_LOGI(TAG, "初始化RMT通道1，GPIO: %d", WS2812_PIN_1);
     
-    // 创建RMT TX通道
-    rmt_tx_channel_config_t tx_config = {
-        .gpio_num = WS2812_PIN,
+    // 创建RMT TX通道1
+    rmt_tx_channel_config_t tx_config_1 = {
+        .gpio_num = WS2812_PIN_1,
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = RMT_RESOLUTION_HZ,
         .mem_block_symbols = 64,
@@ -106,28 +110,65 @@ static bool initRMT(void)
         .flags.with_dma = false,
     };
 
-    esp_err_t ret = rmt_new_tx_channel(&tx_config, &rmt_channel);
+    esp_err_t ret = rmt_new_tx_channel(&tx_config_1, &rmt_channel_1);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "创建RMT TX通道失败: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "创建RMT TX通道1失败: %s", esp_err_to_name(ret));
         return false;
     }
 
-    // 创建简单的复制编码器
-    rmt_copy_encoder_config_t copy_encoder_config = {};
-    ret = rmt_new_copy_encoder(&copy_encoder_config, &led_encoder);
+    // 创建简单的复制编码器1
+    rmt_copy_encoder_config_t copy_encoder_config_1 = {};
+    ret = rmt_new_copy_encoder(&copy_encoder_config_1, &led_encoder_1);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "创建复制编码器失败: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "创建复制编码器1失败: %s", esp_err_to_name(ret));
         return false;
     }
 
-    // 启用RMT通道
-    ret = rmt_enable(rmt_channel);
+    // 启用RMT通道1
+    ret = rmt_enable(rmt_channel_1);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "启用RMT通道失败: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "启用RMT通道1失败: %s", esp_err_to_name(ret));
         return false;
     }
 
-    ESP_LOGI(TAG, "RMT初始化成功");
+    ESP_LOGI(TAG, "RMT通道1初始化成功");
+
+    // 初始化第二个RMT通道
+    ESP_LOGI(TAG, "初始化RMT通道2，GPIO: %d", WS2812_PIN_2);
+    
+    // 创建RMT TX通道2
+    rmt_tx_channel_config_t tx_config_2 = {
+        .gpio_num = WS2812_PIN_2,
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = RMT_RESOLUTION_HZ,
+        .mem_block_symbols = 64,
+        .trans_queue_depth = 4,
+        .flags.invert_out = false,
+        .flags.with_dma = false,
+    };
+
+    ret = rmt_new_tx_channel(&tx_config_2, &rmt_channel_2);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "创建RMT TX通道2失败: %s", esp_err_to_name(ret));
+        return false;
+    }
+
+    // 创建简单的复制编码器2
+    rmt_copy_encoder_config_t copy_encoder_config_2 = {};
+    ret = rmt_new_copy_encoder(&copy_encoder_config_2, &led_encoder_2);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "创建复制编码器2失败: %s", esp_err_to_name(ret));
+        return false;
+    }
+
+    // 启用RMT通道2
+    ret = rmt_enable(rmt_channel_2);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "启用RMT通道2失败: %s", esp_err_to_name(ret));
+        return false;
+    }
+
+    ESP_LOGI(TAG, "RMT通道2初始化成功");
     return true;
 }
 
@@ -159,11 +200,11 @@ void handle_emotion_command(twai_message_t *message) {
             break;
             
         case EMOTION_SAD:
-            ESP_LOGI(TAG, "情绪状态设置为: 伤心 (闪电效果)");
+            ESP_LOGI(TAG, "情绪状态设置为: 伤心 (紫色追逐效果)");
             break;
             
         case EMOTION_SURPRISE:
-            ESP_LOGI(TAG, "情绪状态设置为: 惊讶 (紫色追逐)");
+            ESP_LOGI(TAG, "情绪状态设置为: 惊讶 (闪电效果)");
             break;
             
         case EMOTION_NEUTRAL:
@@ -187,13 +228,13 @@ void emotion_animation_task(void *pvParameters) {
                 break;
                 
             case EMOTION_SAD:
-                // 伤心 - 闪电效果
-                blue_lightning_effect(80);
+                // 伤心 - 紫色追逐效果
+                purple_chase_effect(30);
                 break;
                 
             case EMOTION_SURPRISE:
-                // 惊讶 - 紫色追逐
-                purple_chase_effect(60);
+                // 惊讶 - 闪电效果
+                blue_lightning_effect(80);
                 break;
                 
             case EMOTION_NEUTRAL:
@@ -213,7 +254,7 @@ void emotion_animation_task(void *pvParameters) {
 void app_main(void)
 {
     ESP_LOGI(TAG, "ESPCAN-12V-SK6812 启动");
-    ESP_LOGI(TAG, "SK6812 LED数量: %d", WS2812_LEDS_COUNT);
+    ESP_LOGI(TAG, "SK6812 LED总数量: %d (两组各%d)", WS2812_LEDS_TOTAL, WS2812_LEDS_PER_STRIP);
     
     // 配置LED引脚
     gpio_reset_pin(LED_PIN);
